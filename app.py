@@ -10,9 +10,16 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from google import genai
 from dotenv import load_dotenv
 
-# Load API key from the same folder as app.py
+# Load environment variables from the project folder
 env_path = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=env_path)
+
+load_dotenv(dotenv_path=env_path, override=True)
+
+# Check API key loading (does not display the actual key)
+api_key = os.getenv("GEMINI_API_KEY")
+
+st.write("ENV file found:", env_path.exists())
+st.write("API key loaded:", bool(api_key))
 
 st.title("AI PDF Question Answering Assistant")
 
@@ -45,7 +52,7 @@ if uploaded_file is not None:
 
         st.success("PDF text extracted!")
 
-        # Split text into chunks
+        # Split PDF text into chunks
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50
@@ -60,7 +67,7 @@ if uploaded_file is not None:
             # Generate embeddings
             embeddings = model.encode(chunks)
 
-            # Store in ChromaDB
+            # Store embeddings in ChromaDB
             db = chromadb.Client()
 
             collection = db.get_or_create_collection(
@@ -80,7 +87,7 @@ if uploaded_file is not None:
 
             st.success("PDF stored in ChromaDB!")
 
-            # Ask question
+            # Ask a question
             st.subheader("Ask your question")
 
             question = st.text_input("Enter your question")
@@ -91,45 +98,41 @@ if uploaded_file is not None:
 
                     st.warning("Please enter your question.")
 
+                elif not api_key:
+
+                    st.error(
+                        "Gemini API key not found. "
+                        "Please check your .env file."
+                    )
+
                 else:
 
-                    # Retrieve relevant PDF content
-                    question_embedding = model.encode(question)
+                    try:
 
-                    results = collection.query(
-                        query_embeddings=[
-                            question_embedding.tolist()
-                        ],
-                        n_results=min(3, len(chunks))
-                    )
+                        # Retrieve relevant PDF content
+                        question_embedding = model.encode(question)
 
-                    context = "\n\n".join(
-                        results["documents"][0]
-                    )
-
-                    # Get Gemini API key
-                    api_key = os.getenv("GEMINI_API_KEY")
-
-                    if not api_key:
-
-                        st.error(
-                            "Gemini API key not found. "
-                            "Please check your .env file."
+                        results = collection.query(
+                            query_embeddings=[
+                                question_embedding.tolist()
+                            ],
+                            n_results=min(3, len(chunks))
                         )
 
-                    else:
+                        context = "\n\n".join(
+                            results["documents"][0]
+                        )
 
-                        try:
+                        # Generate answer using Gemini
+                        with st.spinner("Generating answer..."):
 
-                            with st.spinner("Generating answer..."):
+                            client = genai.Client(
+                                api_key=api_key
+                            )
 
-                                client = genai.Client(
-                                    api_key=api_key
-                                )
-
-                                response = client.interactions.create(
-                                    model="gemini-3.8-flash",
-                                    input=f"""
+                            response = client.interactions.create(
+                                model="gemini-3.8-flash",
+                                input=f"""
 Answer the question using only the PDF content below.
 
 If the answer is not present, say:
@@ -141,11 +144,11 @@ PDF content:
 Question:
 {question}
 """
-                                )
+                            )
 
-                            st.subheader("Answer")
-                            st.write(response.output_text)
+                        st.subheader("Answer")
+                        st.write(response.output_text)
 
-                        except Exception as e:
+                    except Exception as e:
 
-                            st.error(f"Gemini error: {e}")
+                        st.error(f"Gemini error: {e}")
