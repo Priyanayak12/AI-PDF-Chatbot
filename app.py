@@ -3,38 +3,23 @@ import streamlit as st
 import chromadb
 import os
 
-from pathlib import Path
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from google import genai
 from dotenv import load_dotenv
 
-# Load environment variables from the project folder
-env_path = Path(__file__).resolve().parent / ".env"
-
-load_dotenv(dotenv_path=env_path, override=True)
-
-# Check API key loading (does not display the actual key)
-api_key = os.getenv("GEMINI_API_KEY")
-
-st.write("ENV file found:", env_path.exists())
-st.write("API key loaded:", bool(api_key))
+load_dotenv()
 
 st.title("AI PDF Question Answering Assistant")
 
-# Load embedding model
 @st.cache_resource
 def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 model = load_model()
 
-# Upload PDF
-uploaded_file = st.file_uploader(
-    "Upload your PDF",
-    type="pdf"
-)
+uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
 
 if uploaded_file is not None:
 
@@ -45,14 +30,11 @@ if uploaded_file is not None:
         text += page.extract_text() or ""
 
     if not text.strip():
-
         st.warning("No readable text found in this PDF.")
 
     else:
-
         st.success("PDF text extracted!")
 
-        # Split PDF text into chunks
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50
@@ -64,10 +46,8 @@ if uploaded_file is not None:
 
         if chunks:
 
-            # Generate embeddings
             embeddings = model.encode(chunks)
 
-            # Store embeddings in ChromaDB
             db = chromadb.Client()
 
             collection = db.get_or_create_collection(
@@ -87,7 +67,6 @@ if uploaded_file is not None:
 
             st.success("PDF stored in ChromaDB!")
 
-            # Ask a question
             st.subheader("Ask your question")
 
             question = st.text_input("Enter your question")
@@ -95,44 +74,39 @@ if uploaded_file is not None:
             if st.button("Get Answer"):
 
                 if not question.strip():
-
-                    st.warning("Please enter your question.")
-
-                elif not api_key:
-
-                    st.error(
-                        "Gemini API key not found. "
-                        "Please check your .env file."
-                    )
+                    st.warning("Please enter a question.")
 
                 else:
 
-                    try:
+                    question_embedding = model.encode(question)
 
-                        # Retrieve relevant PDF content
-                        question_embedding = model.encode(question)
+                    results = collection.query(
+                        query_embeddings=[
+                            question_embedding.tolist()
+                        ],
+                        n_results=min(3, len(chunks))
+                    )
 
-                        results = collection.query(
-                            query_embeddings=[
-                                question_embedding.tolist()
-                            ],
-                            n_results=min(3, len(chunks))
-                        )
+                    context = "\n\n".join(
+                        results["documents"][0]
+                    )
 
-                        context = "\n\n".join(
-                            results["documents"][0]
-                        )
+                    api_key = os.getenv("GEMINI_API_KEY")
 
-                        # Generate answer using Gemini
-                        with st.spinner("Generating answer..."):
+                    if not api_key:
+                        st.error("Gemini API key not found in .env file.")
 
-                            client = genai.Client(
-                                api_key=api_key
-                            )
+                    else:
+                        try:
+                            with st.spinner("Generating answer..."):
 
-                            response = client.interactions.create(
-                                model="gemini-3.8-flash",
-                                input=f"""
+                                client = genai.Client(
+                                    api_key=api_key
+                                )
+
+                                response = client.interactions.create(
+                                    model="gemini-3.8-flash",
+                                    input=f"""
 Answer the question using only the PDF content below.
 
 If the answer is not present, say:
@@ -144,11 +118,10 @@ PDF content:
 Question:
 {question}
 """
-                            )
+                                )
 
-                        st.subheader("Answer")
-                        st.write(response.output_text)
+                            st.subheader("Answer")
+                            st.write(response.output_text)
 
-                    except Exception as e:
-
-                        st.error(f"Gemini error: {e}")
+                        except Exception as e:
+                            st.error(f"Gemini error: {e}")
