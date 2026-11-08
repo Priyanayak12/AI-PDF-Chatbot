@@ -3,23 +3,31 @@ import streamlit as st
 import chromadb
 import os
 
+from pathlib import Path
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from google import genai
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load API key from the same folder as app.py
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 st.title("AI PDF Question Answering Assistant")
 
+# Load embedding model
 @st.cache_resource
 def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 model = load_model()
 
-uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
+# Upload PDF
+uploaded_file = st.file_uploader(
+    "Upload your PDF",
+    type="pdf"
+)
 
 if uploaded_file is not None:
 
@@ -30,11 +38,14 @@ if uploaded_file is not None:
         text += page.extract_text() or ""
 
     if not text.strip():
+
         st.warning("No readable text found in this PDF.")
 
     else:
+
         st.success("PDF text extracted!")
 
+        # Split text into chunks
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50
@@ -46,8 +57,10 @@ if uploaded_file is not None:
 
         if chunks:
 
+            # Generate embeddings
             embeddings = model.encode(chunks)
 
+            # Store in ChromaDB
             db = chromadb.Client()
 
             collection = db.get_or_create_collection(
@@ -67,6 +80,7 @@ if uploaded_file is not None:
 
             st.success("PDF stored in ChromaDB!")
 
+            # Ask question
             st.subheader("Ask your question")
 
             question = st.text_input("Enter your question")
@@ -74,10 +88,12 @@ if uploaded_file is not None:
             if st.button("Get Answer"):
 
                 if not question.strip():
-                    st.warning("Please enter a question.")
+
+                    st.warning("Please enter your question.")
 
                 else:
 
+                    # Retrieve relevant PDF content
                     question_embedding = model.encode(question)
 
                     results = collection.query(
@@ -91,13 +107,20 @@ if uploaded_file is not None:
                         results["documents"][0]
                     )
 
+                    # Get Gemini API key
                     api_key = os.getenv("GEMINI_API_KEY")
 
                     if not api_key:
-                        st.error("Gemini API key not found in .env file.")
+
+                        st.error(
+                            "Gemini API key not found. "
+                            "Please check your .env file."
+                        )
 
                     else:
+
                         try:
+
                             with st.spinner("Generating answer..."):
 
                                 client = genai.Client(
@@ -124,4 +147,5 @@ Question:
                             st.write(response.output_text)
 
                         except Exception as e:
+
                             st.error(f"Gemini error: {e}")
